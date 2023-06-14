@@ -5,16 +5,62 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY);
 const port = process.env.PORT || 5000;
+const nodemailer = require("nodemailer");
+const mg = require('nodemailer-mailgun-transport');
+
 
 
 // middleware
 app.use(cors());
 app.use(express.json());
 
+
+// let transporter = nodemailer.createTransport({
+//   host: 'smtp.sendgrid.net',
+//   port: 587,
+//   auth: {
+//     user: "apikey",
+//     pass: process.env.SENDGRID_API_KEY
+//   }
+// })
+
+// This is your API key that you retrieve from www.mailgun.com/cp (free up to 10K monthly emails)
+const auth = {
+  auth: {
+    api_key: process.env.EMAIL_PRIVATE_KEY,
+    domain: process.env.EMAIL_DOMAIN
+  }
+}
+
+const transporter = nodemailer.createTransport(mg(auth));
+
+
+// send payment confirmation email
+const sendPaymentConfirmationEmail = payment => {
+  transporter.sendMail({
+    from: "stewieboyyy@gmail.com", // verified sender email
+    to: "stewieboyyy@gmail.com", // recipient email
+    subject: "Your order is confirmed. Enjoy the food soon", // Subject line
+    text: "Hello world!", // plain text body
+    html: `
+      <div>
+        <h2>Payment Confirmed!!</h2>
+        <p>Transaction id: ${payment.transactionId}</p>
+      </div>
+    `, // html body
+  }, function (error, info) {
+    if (error) {
+      console.log(error);
+    } else {
+      console.log('Email sent: ' + info.response);
+    }
+  });
+};
+
+
+
 const verifyJWT = (req, res, next) => {
   const authorization = req.headers.authorization;
-  console.log(req.headers);
-  console.log(process.env.PAYMENT_SECRET_KEY);
   if (!authorization) {
     return res.status(401).send({ error: true, message: 'unauthorized access' });
   }
@@ -210,7 +256,12 @@ async function run() {
       const insertResult = await paymentCollection.insertOne(payment);
 
       const query = { _id: { $in: payment.cartItems.map(id => new ObjectId(id)) } }
-      const deleteResult = await cartCollection.deleteMany(query)
+      const deleteResult = await cartCollection.deleteMany(query);
+
+
+      // send an email confirming payment
+      sendPaymentConfirmationEmail(payment);
+
 
       res.send({ insertResult, deleteResult });
     })
@@ -233,7 +284,7 @@ async function run() {
       */
 
       const payments = await paymentCollection.find().toArray();
-      const revenue = payments.reduce( ( sum, payment) => sum + payment.price, 0)
+      const revenue = payments.reduce((sum, payment) => sum + payment.price, 0)
 
       res.send({
         revenue,
@@ -257,7 +308,7 @@ async function run() {
      * 7. for each category use reduce to get the total amount spent on this category
      * 
     */
-    app.get('/order-stats', verifyJWT, verifyAdmin, async(req, res) =>{
+    app.get('/order-stats', verifyJWT, verifyAdmin, async (req, res) => {
       const pipeline = [
         {
           $lookup: {
